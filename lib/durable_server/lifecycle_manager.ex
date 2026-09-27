@@ -817,11 +817,15 @@ defmodule DurableServer.LifecycleManager do
     cache_duration = System.monotonic_time(:millisecond) - cache_start
 
     case cache_result do
-      {:ok, _count, _cleaned_count, error_count} when error_count > 0 ->
-        # A partial view of the cluster is dangerous - we could incorrectly treat
-        # healthy nodes as expired and steal their locks
-        raise RuntimeError,
-              "failed to refresh heartbeat cache: #{error_count} heartbeat fetch errors"
+      {:ok, count, _cleaned_count, error_count} when error_count > 0 ->
+        # A node whose heartbeat fails to fetch just keeps its prior cache
+        # entry this cycle; tolerate it like the :subscribe/reconcile path
+        # does, instead of crashing this node's whole supervision tree.
+        log(state, :warning, fn ->
+          "Refreshed heartbeat cache with #{count} nodes, #{error_count} heartbeat fetch error(s) in #{cache_duration}ms"
+        end)
+
+        cache_duration
 
       {:ok, count, cleaned_count, _error_count} when cleaned_count > 0 ->
         log(state, :debug, fn ->
