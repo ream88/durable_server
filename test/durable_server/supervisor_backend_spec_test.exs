@@ -28,7 +28,8 @@ defmodule DurableServer.SupervisorBackendSpecTest do
        %{
          state: %{
            table: :ets.new(__MODULE__, [:set, :public]),
-           name: Map.get(opts, :name)
+           name: Map.get(opts, :name),
+           ensure_ready: Map.get(opts, :ensure_ready, :ok)
          },
          defaults: %{
            heartbeat_tracking_mode: :poll,
@@ -40,7 +41,7 @@ defmodule DurableServer.SupervisorBackendSpecTest do
     end
 
     @impl true
-    def ensure_ready(_state), do: :ok
+    def ensure_ready(%{ensure_ready: result}), do: result
 
     @impl true
     def get_object(%{table: table}, key, _opts) do
@@ -108,6 +109,41 @@ defmodule DurableServer.SupervisorBackendSpecTest do
       System.unique_integer([:positive, :monotonic])
       |> Integer.to_string()
     end
+  end
+
+  test "exits with an actionable startup error when a backend is unavailable" do
+    supervisor_name = unique_supervisor_name("backend_unavailable")
+    prefix = unique_prefix("backend_unavailable")
+    reason = %Req.TransportError{reason: "request process exited before returning a response"}
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        DurableServer.Supervisor.start_link(
+          name: supervisor_name,
+          prefix: prefix,
+          backend: {InMemoryBackend, name: :unavailable, ensure_ready: {:error, reason}}
+        )
+      end)
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, {:backend_unavailable, InMemoryBackend, ^reason}}
+  end
+
+  test "raises when a backend violates the readiness result contract" do
+    supervisor_name = unique_supervisor_name("invalid_readiness")
+    prefix = unique_prefix("invalid_readiness")
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        DurableServer.Supervisor.start_link(
+          name: supervisor_name,
+          prefix: prefix,
+          backend: {InMemoryBackend, name: :invalid, ensure_ready: :unexpected}
+        )
+      end)
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, {%ArgumentError{message: message}, _stacktrace}}
+
+    assert message =~ "ensure_ready/1 returned invalid result: :unexpected"
   end
 
   test "rejects heartbeats beyond the configured future clock-skew tolerance" do

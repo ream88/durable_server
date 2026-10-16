@@ -1,8 +1,17 @@
-## Unreleased
+## 0.1.6 (2026-10-12)
 
-- Resolve duplicate DurableServer ownership by a persisted, monotonically increasing lock epoch. Group now keeps the latest successful object-store claimant and retires only stale owners instead of killing every claimant and causing repeated anti-entropy restart loops.
+- Balance new child starts using the existing eligible-node ranking, considering live local capacity alongside remote heartbeat capacity instead of filling local first. Eligible local remains a candidate even when it ranks beyond the remote candidate-pool limit. Explicit local starts, restart/rehome, and sticky-placement behavior are unchanged.
+- Skip dumping, serialization, and hashing during periodic and automatic sync when callback state is exactly unchanged and no earlier change is pending. Runtime state changes still use `dump_state/1` to determine whether a storage write is needed; explicit sync and lifecycle writes continue to evaluate the dump. Dumps that depend on external data such as ETS need an explicit sync when callback state is unchanged.
+- Add the supervisor `:hibernate_after` option to compact idle DurableServer heaps. Accept a positive millisecond timeout for all modules or a map of module-specific timeouts with an optional `:default`. Applies to initial starts, restarts, and rehoming; disabled by default.
+- Allow `max_children: %{MyModule => 0}` to disable a module on a node, excluding that node from remote placement for the module. The total capacity limit must still be positive when configured.
+- Resolve duplicate DurableServer ownership by a persisted, monotonically increasing lock epoch. Group now keeps the latest successful object-store claimant and retires only stale owners instead of killing every claimant and causing repeated anti-entropy restart loops. Support both per-claim and legacy pairwise Group conflict-resolution callbacks.
 - Enforce cumulative sticky-placement gates during request-driven remote placement so an existing server cannot move to a fallback node before that level unlocks.
 - Allow an expired restart attempt to be reclaimed immediately by another node at an allowed sticky-placement level, while preserving strict placement when no level matches.
+- Re-sign retried S3 requests after clearing generated AWS SigV4 headers so retries do not reuse the previous attempt's signature.
+- Retry transient failures during initial object-store claims. Recover a lost claim response only when a consistent read confirms the exact state and owner from the same boot, without accepting another process's claim.
+- Retry transient failures and throttling during conditional lock claims for existing servers, including `503 SlowDown` immediately after a stop. Preserve ETag conflict detection and same-boot recovery when a previous attempt succeeded but its response was lost.
+- Retry transient bucket-creation failures during object-store readiness checks. Propagate exhausted backend readiness failures as `{:backend_unavailable, adapter, reason}` instead of crashing with a match error, and reject invalid readiness callback results explicitly.
+- Add CI for Elixir 1.19 / OTP 26 and the latest stable Elixir / OTP, including formatting, warnings-as-errors checks, and LocalStack-backed tests. Strengthen regression coverage for atomic claims, durable sync and recovery outcomes, and graceful shutdown.
 
 ## 0.1.5 (2026-08-27)
 - Treat explicit `:sync`, `{:sync, metadata}`, and `sync: true` callback returns as strict durability boundaries. Built-in backends first exhaust their bounded transient retry policy; if the write still fails, the DurableServer exits with a structured `{:sync_failed, reason}` fatal-exit reason before acknowledging the callback. Automatic and periodic sync remain best effort for transient failures, while storage conflicts remain fatal.

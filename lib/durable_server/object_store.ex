@@ -116,6 +116,7 @@ defmodule DurableServer.ObjectStore do
     case create_bucket(client, client.bucket) do
       {:error, %{status: 409}} -> :ok
       {:ok, %__MODULE__{}} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -137,7 +138,8 @@ defmodule DurableServer.ObjectStore do
            params: %{
              "location-constraint" => "us-east-1"
            },
-           retry: :transient
+           retry: &retry_bucket_create?/2,
+           max_retries: 2
          ) do
       {:ok, %{status: status}} when status >= 200 and status < 300 ->
         {:ok, new(client, bucket: bucket_name)}
@@ -149,6 +151,22 @@ defmodule DurableServer.ObjectStore do
         {:error, response}
     end
   end
+
+  # A transport failure can hide a successful bucket create. Retrying is safe:
+  # the create is idempotent and an already-created bucket returns 409.
+  defp retry_bucket_create?(_request, %Req.TransportError{}), do: true
+
+  defp retry_bucket_create?(_request, %Req.Response{status: status})
+       when status in [408, 429, 500, 502, 503, 504],
+       do: true
+
+  defp retry_bucket_create?(
+         _request,
+         %Req.HTTPError{protocol: :http2, reason: :unprocessed}
+       ),
+       do: true
+
+  defp retry_bucket_create?(_request, _response_or_exception), do: false
 
   @doc """
   Lists all buckets in the account.

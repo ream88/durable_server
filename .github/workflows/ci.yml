@@ -73,5 +73,8 @@ jobs:
       - name: Compile with warnings as errors
         run: mix compile --warnings-as-errors
 
+      - name: Start EPMD for distributed tests
+        run: epmd -daemon
+
       - name: Test with warnings as errors
         run: mix test --warnings-as-errors
